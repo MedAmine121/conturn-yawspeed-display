@@ -1,159 +1,69 @@
-<h1>conturn <img src="https://user-images.githubusercontent.com/16616463/182421854-486f911c-257c-403a-b9f1-423046c19243.png" width="24" height="23"></h1>
+<h1>conturn-yawspeed-display <img src="https://user-images.githubusercontent.com/16616463/182421854-486f911c-257c-403a-b9f1-423046c19243.png" width="24" height="23"></h1>
 
 <img src="https://user-images.githubusercontent.com/16616463/191477910-0131d418-6065-45d6-b72a-a668c89b0249.png">
 
-conturn provides alternative `+left/+right/+speed` commands for CS:GO & CS:S with in-game `cl_yawspeed`, `cl_anglespeedkey` control.
+conturn provides an on-screen display (OSD) overlay for in-game `cl_yawspeed` in CS:GO, CS:S & Momentum Mod.
 
-These convars, which control the turning speed for the `+left/+right` commands, exist in previous games in the series (1.6, CS:S), but are inaccessible in CS:GO, forcing useless unchangable defaults (`cl_yawspeed 210`, `cl_anglespeedkey 0.67`). This program aims to fill this gap, as these commands are essential for movement game modes like surf.
-
-conturn works by simulating mouse movement based on the game's console output, captured using `con_logfile`.
-
-New convars/commands `+_left`, `+_right`, `+_speed`, `_cl_yawspeed`, `_cl_anglespeedkey` can be used in-game to turn and control the turning speed, and keys can be bound as usual through the console and .cfg files.
+Whenever `cl_yawspeed` (or `_cl_yawspeed`) is changed or printed in console (e.g. from keybinds like `toggle cl_yawspeed 80 160 240; cl_yawspeed`), conturn automatically renders the current yawspeed value in an unobtrusive top-left on-screen overlay that fades away after 1.5 seconds.
 
 - [Installation](#installation)
 - [Usage](#usage)
-- [Anti-cheat software](#anti-cheat-software)
-- [conturn vs. turnbinds](#conturn-vs-turnbinds)
 - [How it works](#how-it-works)
 - [Building](#building)
 
 ## Installation
 
-**1. [Download](https://github.com/t5mat/conturn/releases/latest/download/conturn.exe) and run `conturn.exe`**
+**1. Run `conturn.exe`**
 
-The program will run as Administrator in order to be able to create symlinks.
+The program will run as Administrator in order to create the console log named pipe symlink.
 
 Settings are stored in `<exe-name>.ini`.
 
-To use with multiple games, copy `conturn.exe` to different names (`conturn-csgo.exe`, `conturn-cstrike.exe`...) so that different settings files are used.
+To use with multiple games, copy `conturn.exe` to different names (`conturn-csgo.exe`, `conturn-cstrike.exe`, `conturn-momentum.exe`...) so that different settings files are used.
 
-**2. Select your game `.exe` file** (`csgo.exe`/`hl2.exe`)
+**2. Select your game `.exe` file** (`csgo.exe`/`hl2.exe`/`momentum.exe`)
 
-On first run, conturn will ask for the location of your game `.exe` file. **The program is external to the game and does not patch it in any way**, the path is needed to know where to create 2 files - a log file (`<game>\conturn.log`) and a .cfg file (`<game>\cfg\conturn.cfg`). These are automatically deleted when you exit conturn.
+On first run, conturn will ask for the location of your game `.exe` file. **The program is external to the game and does not patch or inject into it in any way**, the path is needed to know where to create 2 files - a log file (`<game>\conturn.log`) and a .cfg file (`<game>\cfg\conturn.cfg`). These are automatically deleted when you exit conturn.
 
 **3. Attach to the game using `exec conturn`**
 
-Once conturn is running (icon in the tray), you'll need to attach it to the game by running `exec conturn` in console. This will not make any permanent changes to your configuration.
+Once conturn is running (icon in the tray), attach it to the game by running `exec conturn` in console. This will not make any permanent changes to your configuration.
 
-You'll have to run `exec conturn` every time you open the game. You can add it to your `autoexec.cfg`, but that won't work for when you launch the game first. Another option is to rebind the console key as follows: ```bind ` "exec conturn; toggleconsole"```
+You can add it to your `autoexec.cfg`, or rebind the console key: ```bind ` "exec conturn; toggleconsole"```
 
 ## Usage
 
-Once conturn is running and attached to the game, the following new convars/commands will be available in-game:
+Bind your keys in-game to adjust `cl_yawspeed` and echo its value:
 
-- `+_left` - bind this instead of `+left`
-- `+_right` - bind this instead of `+right`
-- `+_speed` - bind this instead of `+speed` (or with, **but keep in mind `+speed` scales down airaccelerate**)
-- `_cl_yawspeed` (default 90.0) - turning speed for `+_left/+_right`
-- `_cl_anglespeedkey` (default 0.33) - factor by which `_cl_yawspeed` is scaled while in `+_speed`
-
-<details>
-<summary>More</summary>
-
-- `conturn_off` - turn off conturn
-- `conturn_freq` (default 0.001) *(notify after changing)* - maximum frequency of simulated mouse moves; lower values decrease CPU usage in favor of turn smoothness
-- `conturn_sleep` (default 0.0000005) *(notify after changing)* - main loop sleep duration; higher values decrease input polling rate and overall CPU usage
-
-</details>
-
-### Changing convars
-
-The values of `_cl_yawspeed`, `_cl_anglespeedkey`, `sensitivity`, `m_yaw` are used to calculate the speed by which the program moves the mouse cursor.
-
-**conturn has to be notified when they change** - changing a convar will have no effect until conturn is notified of the new value. You do that by simply writing the variable name to print its value after each time you change it. For example:
-
-```
-toggle _cl_yawspeed 80 160 240; _cl_yawspeed
+```cfg
+bind MOUSE5 "toggle cl_yawspeed 70 140 210; cl_yawspeed"
 ```
 
-### Example config
+Whenever the value is printed to the console, the OSD overlay will pop up with the current yawspeed.
 
-<details>
-<summary>surf.cfg</summary>
-
-```
-exec conturn
-
-bind MOUSE1 "+_left"
-bind MOUSE2 "+_right"
-bind SHIFT "+_speed"
-
-_cl_yawspeed 120; _cl_yawspeed
-```
-
-</details>
-
-<details>
-<summary>comp.cfg</summary>
-
-```
+To detach conturn without closing the program:
+```cfg
 conturn_off
-
-bind MOUSE1 "+attack"
-bind MOUSE2 "+attack2"
-bind MOUSE5 "use weapon_flashbang"
 ```
-
-</details>
-
-<details>
-<summary>surf_tronic_njv.cfg</summary>
-
-```
-exec surf
-
-# Initial yawspeed
-_cl_yawspeed 140; _cl_yawspeed
-
-# Use MOUSE5 to change yawspeed
-bind MOUSE5 "toggle _cl_yawspeed 70 140 210; _cl_yawspeed"
-
-# Use SHIFT for fast spins
-_cl_anglespeedkey 3.0; _cl_anglespeedkey
-```
-
-</details>
-
-## Anti-cheat software
-
-The program does not patch or inject anything into the game.
-
-Apart from simulating mouse input, it doesn't really do anything suspicious.
-
-It would be fair to say it's as VAC bannable as an AutoHotkey script.
-
-Anti-cheat software (FACEIT AC, ...) can easily detect the simulation of mouse movement though, and either prevent it or prevent the program from running completely. This is expected, just don't actively try to use this program in unintended scenarios.
-
-## conturn vs. turnbinds
-
-conturn provides some benefits over [turnbinds](https://github.com/t5mat/turnbinds):
-
-- **It uses in-game configuration** - you can use aliases, binds, and manage your configuration in (per-map) .cfg files
-- **It doesn't need to monitor input alongside the game** - conturn operates on the input captured by the game, which results in less CPU usage and better input consistency
-- **No need to `Alt+Tab`** - there's no UI, everything happens in-game
 
 ## How it works
 
-*Game console output is read through a named pipe.* The command `con_logfile` can be used to write console output to a file. There are no checks on the path before opening it, so a symlink can be used instead of a file. conturn creates a symlink to a named pipe through which it receives the console output. Named pipes writes are fast, also due to the fact that there's no disk I/O (it's worth noting that the game flushes the file after every console message, which means using `con_logfile` with an actual file is not great for performance).
+*Game console output is read through a named pipe.* The command `con_logfile` writes console output to a file. conturn creates a symbolic link from `<game>\conturn.log` to a Windows named pipe (`\\.\pipe\conturn-log`).
 
-`exec conturn` will:
+When you run `exec conturn`:
+- It sets `con_logfile conturn.log`, piping console output directly to the application.
+- It queries `cl_yawspeed` so the overlay displays the current value immediately.
 
-- Create the relevant aliases and convars
-- Connect the console output to the named pipe using `con_logfile`
-- On first run, set `_cl_yawspeed`, `_cl_anglespeedkey` values from settings
-- Notify conturn of the current in-game values of `sensitivity` and `m_yaw`
-
-conturn uses convar prints (for example `"_cl_yawspeed" = "90.0"`, generated by running `_cl_yawspeed`) as "notifications" of convar changes, which signal when to start/stop turning or update the turning speed. This makes external input monitoring unnecessary (keyboard hook/raw input) - the game tells us when buttons are pressed.
-
-conturn is active only when the foreground window belongs to the process connected to the pipe (the game), and the mouse cursor is hidden (do not want to move the cursor when the menu/console are open).
-
-Relevant console commands:
-- `setinfo` - create a new convar (`FCVAR_USERINFO`)
-- `alias` - print all aliases
-- `cvarlist <name>` - print convar info
-- `key_listboundkeys` - list bound keys
-- *Console filtering* - the program uses console filtering (`con_filter_enable`, `con_filter_text_out`) to filter the in-game console spam it creates
+The application parses the console stream for `cl_yawspeed` (handling Source engine prefix tags like `[engine] `) and renders the value on a transparent topmost overlay window using GDI.
 
 ## Building
 
-Run `./build` on a Linux machine with Docker installed.
+### MSVC (Visual Studio)
+Open a Visual Studio Developer Command Prompt and run:
+```cmd
+rc.exe conturn.rc
+cl.exe /std:c++latest /O2 /D_CRT_SECURE_NO_WARNINGS conturn.cpp conturn.res /link /subsystem:windows
+```
+
+### Docker / MinGW
+Run `./build` on a machine with Docker installed.

@@ -1,55 +1,34 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include <cwchar>
 #include <cstdio>
 #include <optional>
 #include <algorithm>
+#include <utility>
+#define NOMINMAX
+// clang-format off
 #include <windows.h>
+// clang-format on
 #include <pathcch.h>
 #include <shlobj.h>
+#include <shlwapi.h>
+
+#ifdef _MSC_VER
+#pragma comment(lib, "version.lib")
+#pragma comment(lib, "pathcch.lib")
+#pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "gdi32.lib")
+#endif
 
 namespace common {
 
 namespace win32 {
 
-namespace {
-
-using ZwSetTimerResolution_t = NTSTATUS (WINAPI *)(IN ULONG RequestedResolution, IN BOOLEAN Set, OUT PULONG ActualResolution);
-auto ZwSetTimerResolution = reinterpret_cast<ZwSetTimerResolution_t>(GetProcAddress(LoadLibraryW(L"ntdll.dll"), "ZwSetTimerResolution"));
-
-using NtDelayExecution_t = NTSTATUS (WINAPI *)(IN BOOL Alertable, IN PLARGE_INTEGER DelayInterval);
-auto NtDelayExecution = reinterpret_cast<NtDelayExecution_t>(GetProcAddress(LoadLibraryW(L"ntdll.dll"), "NtDelayExecution"));
-
-long long performance_counter_frequency()
-{
-    LARGE_INTEGER f;
-    QueryPerformanceFrequency(&f);
-    return f.QuadPart;
-}
-
-}
-
 const auto SHELL_TASKBAR_CREATED_MSG = RegisterWindowMessageW(L"TaskbarCreated");
-
-const auto PERFORMANCE_COUNTER_FREQUENCY = performance_counter_frequency();
-
-long long performance_counter()
-{
-    LARGE_INTEGER i;
-    QueryPerformanceCounter(&i);
-    return i.QuadPart;
-}
-
-void set_timer_resolution(unsigned long hns)
-{
-    ULONG actual;
-    ZwSetTimerResolution(hns, true, &actual);
-}
-
-void delay_execution_by(long long hns)
-{
-    LARGE_INTEGER interval;
-    interval.QuadPart = -1 * hns;
-    NtDelayExecution(false, &interval);
-}
 
 HWND create_window(const wchar_t *class_name, const wchar_t *window_name, WNDPROC proc)
 {
@@ -63,19 +42,6 @@ HWND create_window(const wchar_t *class_name, const wchar_t *window_name, WNDPRO
     RegisterClassExW(&cls);
 
     return CreateWindowExW(0, class_name, window_name, 0, 0, 0, 0, 0, nullptr, nullptr, instance, nullptr);
-}
-
-void move_mouse_by(int x, int y)
-{
-    INPUT input;
-    input.type = INPUT_MOUSE;
-    input.mi.dx = x;
-    input.mi.dy = y;
-    input.mi.mouseData = 0;
-    input.mi.dwFlags = MOUSEEVENTF_MOVE;
-    input.mi.time = 0;
-    input.mi.dwExtraInfo = 0;
-    SendInput(1, &input, sizeof(input));
 }
 
 void open_folder_and_select(const wchar_t *path)
@@ -295,100 +261,6 @@ private:
     size_t buffer_count;
 };
 
-struct MouseMoveCalculator
-{
-    long long update(bool reset, bool in_left, bool in_right, bool in_speed, double freq, double yawspeed, double anglespeedkey, double sensitivity, double yaw)
-    {
-        if (reset) {
-            last_in_left = false;
-            last_in_right = false;
-        }
-
-        auto time = win32::performance_counter();
-
-        if ((last_in_left ^ in_left) || (last_in_right ^ in_right)) {
-            last_time = time;
-            remaining = 0.0;
-        }
-
-        last_in_left = in_left;
-        last_in_right = in_right;
-
-        if (!(in_left ^ in_right) || (time - last_time < win32::PERFORMANCE_COUNTER_FREQUENCY * freq)) {
-            return 0;
-        }
-
-        remaining +=
-            (
-                (int(in_left) * -1 + int(in_right)) *
-                (yawspeed / (sensitivity * yaw)) *
-                (in_speed ? anglespeedkey : 1.0) *
-                (time - last_time)
-            ) / win32::PERFORMANCE_COUNTER_FREQUENCY;
-
-        auto amount = static_cast<long long>(remaining);
-        remaining -= amount;
-        last_time = time;
-        return amount;
-    }
-
-private:
-    long long last_time;
-    double remaining;
-    bool last_in_left;
-    bool last_in_right;
-};
-
-struct ForegroundMonitor
-{
-    ForegroundMonitor(const wchar_t *target_path_)
-    {
-        SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, nullptr, proc, 0, 0, WINEVENT_OUTOFCONTEXT);
-        GetWindowThreadProcessId(GetForegroundWindow(), &pid_);
-    }
-
-    auto pid()
-    {
-        return pid_;
-    }
-
-private:
-    static void proc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime)
-    {
-        GetWindowThreadProcessId(hwnd, &pid_);
-    }
-
-    static inline DWORD pid_;
-};
-
-struct CursorMonitor
-{
-    CursorMonitor()
-    {
-        SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE, nullptr, proc, 0, 0, WINEVENT_OUTOFCONTEXT);
-
-        CURSORINFO info = {};
-        info.cbSize = sizeof(info);
-        GetCursorInfo(&info);
-        cursor_ = info.flags & CURSOR_SHOWING;
-    }
-
-    auto cursor()
-    {
-        return cursor_;
-    }
-
-private:
-    static void proc(HWINEVENTHOOK hWinEventHook, DWORD event, HWND hwnd, LONG idObject, LONG idChild, DWORD idEventThread, DWORD dwmsEventTime)
-    {
-        if (idObject == OBJID_CURSOR) {
-            cursor_ = (event == EVENT_OBJECT_SHOW);
-        }
-    }
-
-    static inline bool cursor_;
-};
-
 struct CtrlSignalHandler
 {
     CtrlSignalHandler(HWND hwnd_)
@@ -493,15 +365,146 @@ private:
     CreateMenu_t create_menu;
 };
 
+struct OsdOverlay
+{
+    OsdOverlay()
+    {
+        auto instance = GetModuleHandle(nullptr);
+
+        WNDCLASSEXW cls = {};
+        cls.cbSize = sizeof(WNDCLASSEX);
+        cls.lpfnWndProc = proc;
+        cls.hInstance = instance;
+        cls.lpszClassName = L"ConturnOSD";
+        cls.hbrBackground = nullptr;
+        RegisterClassExW(&cls);
+
+        int width = 500;
+        int height = 120;
+        int x = 40;
+        int y = 40;
+
+        hwnd = CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+            L"ConturnOSD", L"ConturnOSD", WS_POPUP,
+            x, y, width, height,
+            nullptr, nullptr, instance, nullptr
+        );
+
+        if (hwnd) {
+            SetLayeredWindowAttributes(hwnd, COLOR_KEY, 0, LWA_COLORKEY);
+        }
+    }
+
+    ~OsdOverlay()
+    {
+        if (hwnd) {
+            DestroyWindow(hwnd);
+        }
+    }
+
+    void show(const char *yawspeed_val)
+    {
+        if (!hwnd) {
+            return;
+        }
+
+        std::swprintf(text_, std::size(text_), L"%S", yawspeed_val);
+
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        InvalidateRect(hwnd, nullptr, TRUE);
+
+        SetTimer(hwnd, TIMER_ID, 1500, nullptr);
+    }
+
+private:
+    static constexpr UINT_PTR TIMER_ID = 1001;
+    static constexpr COLORREF COLOR_KEY = RGB(1, 1, 1);
+
+    static void draw_outlined_text(HDC hdc, const wchar_t *text, RECT rc, HFONT font)
+    {
+        auto oldFont = SelectObject(hdc, font);
+        SetBkMode(hdc, TRANSPARENT);
+
+        OffsetRect(&rc, 4, 4);
+
+        SetTextColor(hdc, RGB(0, 0, 0));
+        for (int dx = -2; dx <= 2; ++dx) {
+            for (int dy = -2; dy <= 2; ++dy) {
+                if (dx == 0 && dy == 0) continue;
+                RECT offset_rc = rc;
+                OffsetRect(&offset_rc, dx, dy);
+                DrawTextW(hdc, text, -1, &offset_rc, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            }
+        }
+
+        SetTextColor(hdc, RGB(255, 255, 255));
+        DrawTextW(hdc, text, -1, &rc, DT_LEFT | DT_TOP | DT_SINGLELINE);
+
+        SelectObject(hdc, oldFont);
+    }
+
+    static LRESULT CALLBACK proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+    {
+        switch (uMsg) {
+        case WM_TIMER:
+            if (wParam == TIMER_ID) {
+                KillTimer(hwnd, TIMER_ID);
+                ShowWindow(hwnd, SW_HIDE);
+                return 0;
+            }
+            break;
+
+        case WM_PAINT:
+            {
+                PAINTSTRUCT ps;
+                HDC hdc = BeginPaint(hwnd, &ps);
+
+                RECT rc;
+                GetClientRect(hwnd, &rc);
+
+                HDC memDC = CreateCompatibleDC(hdc);
+                HBITMAP memBmp = CreateCompatibleBitmap(hdc, rc.right - rc.left, rc.bottom - rc.top);
+                HBITMAP oldBmp = static_cast<HBITMAP>(SelectObject(memDC, memBmp));
+
+                HBRUSH keyBrush = CreateSolidBrush(COLOR_KEY);
+                FillRect(memDC, &rc, keyBrush);
+                DeleteObject(keyBrush);
+
+                HFONT font = CreateFontW(
+                    80, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                    CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI"
+                );
+
+                draw_outlined_text(memDC, text_, rc, font);
+
+                DeleteObject(font);
+
+                BitBlt(hdc, 0, 0, rc.right - rc.left, rc.bottom - rc.top, memDC, 0, 0, SRCCOPY);
+
+                SelectObject(memDC, oldBmp);
+                DeleteObject(memBmp);
+                DeleteDC(memDC);
+
+                EndPaint(hwnd, &ps);
+                return 0;
+            }
+        case WM_ERASEBKGND:
+            return 1;
+        }
+
+        return DefWindowProcW(hwnd, uMsg, wParam, lParam);
+    }
+
+    HWND hwnd = nullptr;
+    static inline wchar_t text_[64] = L"";
+};
+
 struct ConVar
 {
     char name[CON_VAR_MAX_COUNT];
-
     char value[CON_VAR_MAX_COUNT];
-    union {
-        double double_value;
-        bool bool_value;
-    };
 
     ConVar(const char *name_)
     {
@@ -509,18 +512,17 @@ struct ConVar
         std::snprintf(pattern, std::size(pattern), R"("%s" = ")", name_);
     }
 
-    void parse_double()
-    {
-        double_value = std::atof(value);
-    }
-
-    void parse_bool()
-    {
-        bool_value = std::atof(value);
-    }
-
     bool parse_con_cvar_line(const char *line)
     {
+        if (0 == std::strncmp(line, "[engine] ", 9)) {
+            line += 9;
+        } else if (line[0] == '[') {
+            const char *close_bracket = std::strchr(line, ']');
+            if (close_bracket && close_bracket[1] == ' ') {
+                line = close_bracket + 2;
+            }
+        }
+
         auto start = line;
         for (; pattern[start - line] != '\0'; ++start) {
             if (*start != pattern[start - line]) {
@@ -532,7 +534,7 @@ struct ConVar
             if (start[i] == '"') {
                 auto count = std::min(std::size(value), i + 1);
                 std::strncpy(value, start, count - 1);
-                value[count - 1] = L'\0';
+                value[count - 1] = '\0';
                 return true;
             }
         }
@@ -544,8 +546,18 @@ private:
     char pattern[CON_VAR_MAX_COUNT];
 };
 
+bool is_momentum_exe(const wchar_t *path)
+{
+    const wchar_t *filename = PathFindFileNameW(path);
+    return (_wcsicmp(filename, L"momentum.exe") == 0);
+}
+
 int find_game_steam_appid(const wchar_t *game_path)
 {
+    if (is_momentum_exe(game_path)) {
+        return 1802710;
+    }
+
     wchar_t steam_appid_path[PATHCCH_MAX_CCH];
     std::wcscpy(steam_appid_path, game_path);
     PathCchRemoveFileSpec(steam_appid_path, std::size(steam_appid_path));
@@ -611,6 +623,7 @@ struct App
             switch (steam_appid) {
             case 240:
             case 730:
+            case 1802710:
                 break;
             default:
                 steam_appid = 0;
@@ -629,6 +642,7 @@ struct App
             switch (steam_appid) {
             case 240:
             case 730:
+            case 1802710:
                 break;
             default:
                 MessageBoxW(nullptr, L"Unsupported game.", version_info.title, MB_OK | MB_ICONERROR);
@@ -643,10 +657,24 @@ struct App
         case 730:
             std::wcscpy(game_name, L"csgo");
             break;
+        case 1802710:
+            std::wcscpy(game_name, L"momentum");
+            break;
         }
 
-        std::wcscpy(cfg_path, game_path);
-        PathCchRemoveFileSpec(cfg_path, std::size(cfg_path));
+        wchar_t game_dir[PATHCCH_MAX_CCH];
+        std::wcscpy(game_dir, game_path);
+        PathCchRemoveFileSpec(game_dir, std::size(game_dir));
+        if (steam_appid == 1802710) {
+            if (_wcsicmp(PathFindFileNameW(game_dir), L"win64") == 0) {
+                PathCchRemoveFileSpec(game_dir, std::size(game_dir));
+            }
+            if (_wcsicmp(PathFindFileNameW(game_dir), L"bin") == 0) {
+                PathCchRemoveFileSpec(game_dir, std::size(game_dir));
+            }
+        }
+
+        std::wcscpy(cfg_path, game_dir);
         switch (steam_appid) {
         case 240:
             PathCchAppend(cfg_path, std::size(cfg_path), LR"(cstrike\cfg)");
@@ -654,11 +682,13 @@ struct App
         case 730:
             PathCchAppend(cfg_path, std::size(cfg_path), LR"(csgo\cfg)");
             break;
+        case 1802710:
+            PathCchAppend(cfg_path, std::size(cfg_path), LR"(momentum\cfg)");
+            break;
         }
         PathCchAppend(cfg_path, std::size(cfg_path), cfg_filename);
 
-        std::wcscpy(con_log_path, game_path);
-        PathCchRemoveFileSpec(con_log_path, std::size(con_log_path));
+        std::wcscpy(con_log_path, game_dir);
         switch (steam_appid) {
         case 240:
             PathCchAppend(con_log_path, std::size(con_log_path), LR"(cstrike)");
@@ -666,70 +696,64 @@ struct App
         case 730:
             PathCchAppend(con_log_path, std::size(con_log_path), LR"(csgo)");
             break;
+        case 1802710:
+            PathCchAppend(con_log_path, std::size(con_log_path), LR"(momentum)");
+            break;
         }
         PathCchAppend(con_log_path, std::size(con_log_path), con_log_filename);
 
-        create_con_vars();
-        init_con_vars();
-        ini_read_con_vars();
+        yawspeed.emplace("cl_yawspeed");
+        yawspeed_alt.emplace("_cl_yawspeed");
 
         delete_cfg_file();
         delete_con_log_file();
         create_con_log_file();
-        create_cfg_file(true);
+        create_cfg_file();
 
-        MouseMoveCalculator mouse_move_calculator;
-        ForegroundMonitor foreground_monitor(game_path);
-        CursorMonitor cursor_monitor;
         auto hwnd = win32::create_window(version_info.name, version_info.name, window_proc);
         CtrlSignalHandler ctrl_signal_handler(hwnd);
         tray_icon.emplace(hwnd, version_info.title, create_tray_menu);
-
-        SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
-        win32::set_timer_resolution(1);
+        osd.emplace();
 
         HANDLE game_process = nullptr;
         std::optional<bool> last_connected;
-        bool active = false;
 
         do {
-            bool handle_window = active;
-            bool handle_con_log_pipe = active;
+            bool handle_window = false;
+            bool handle_con_log_pipe = false;
             bool handle_game_process = false;
 
-            if (!active) {
-                if (!game_process) {
-                    HANDLE handles[] = {con_log_pipe->event()};
-                    auto result = MsgWaitForMultipleObjects(std::size(handles), handles, false, INFINITE, QS_ALLINPUT);
-                    switch (result) {
-                    case WAIT_OBJECT_0 + 0:
-                        handle_con_log_pipe = true;
-                        break;
-                    case WAIT_OBJECT_0 + 1:
-                        handle_window = true;
-                        break;
-                    }
-                } else {
-                    HANDLE handles[] = {con_log_pipe->event(), game_process};
-                    auto result = MsgWaitForMultipleObjects(std::size(handles), handles, false, INFINITE, QS_ALLINPUT);
-                    switch (result) {
-                    case WAIT_OBJECT_0 + 0:
-                        handle_con_log_pipe = true;
-                        break;
-                    case WAIT_OBJECT_0 + 1:
-                        handle_game_process = true;
-                        break;
-                    case WAIT_OBJECT_0 + 2:
-                        handle_window = true;
-                        break;
-                    }
+            if (!game_process) {
+                HANDLE handles[] = {con_log_pipe->event()};
+                auto result = MsgWaitForMultipleObjects(std::size(handles), handles, false, INFINITE, QS_ALLINPUT);
+                switch (result) {
+                case WAIT_OBJECT_0 + 0:
+                    handle_con_log_pipe = true;
+                    break;
+                case WAIT_OBJECT_0 + 1:
+                    handle_window = true;
+                    break;
+                }
+            } else {
+                HANDLE handles[] = {con_log_pipe->event(), game_process};
+                auto result = MsgWaitForMultipleObjects(std::size(handles), handles, false, INFINITE, QS_ALLINPUT);
+                switch (result) {
+                case WAIT_OBJECT_0 + 0:
+                    handle_con_log_pipe = true;
+                    break;
+                case WAIT_OBJECT_0 + 1:
+                    handle_game_process = true;
+                    break;
+                case WAIT_OBJECT_0 + 2:
+                    handle_window = true;
+                    break;
                 }
             }
 
             if (handle_window) {
             peek:
                 MSG msg;
-                if (PeekMessageW(&msg, hwnd, 0, 0, PM_REMOVE)) {
+                if (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
                     if (msg.message == WM_QUIT) {
                         break;
                     }
@@ -765,33 +789,15 @@ struct App
                 CloseHandle(game_process);
                 game_process = nullptr;
 
-                create_cfg_file(true);
-                ini_write_con_vars();
-            }
-
-            auto last_active = active;
-            active = !cursor_monitor.cursor() && con_log_pipe->connected() && foreground_monitor.pid() == con_log_pipe->client_pid();
-            active = active && freq->double_value >= 0.0 && (sleep->double_value == -1.0 || (sleep->double_value >= 0.0 && sleep->double_value < 0.5)) && sensitivity->double_value != 0.0 && yaw->double_value != 0.0;
-            if (!active) {
-                continue;
-            }
-
-            auto amount = mouse_move_calculator.update(!last_active, in_left->bool_value, in_right->bool_value, in_speed->bool_value, freq->double_value, yawspeed->double_value, anglespeedkey->double_value, sensitivity->double_value, yaw->double_value);
-            if (amount != 0) {
-                win32::move_mouse_by(amount, 0);
-            }
-
-            if (sleep->double_value != -1.0) {
-                win32::delay_execution_by(sleep->double_value * 10000000);
+                create_cfg_file();
             }
         } while (true);
 
         tray_icon.reset();
+        osd.reset();
 
         delete_cfg_file();
         delete_con_log_file();
-
-        ini_write_con_vars();
 
         ctrl_signal_handler.done();
     }
@@ -869,7 +875,7 @@ private:
         info.lStructSize = sizeof(OPENFILENAMEW);
         info.hwndOwner = nullptr;
         info.hInstance = nullptr;
-        info.lpstrFilter = L"Game .exe file (csgo.exe/hl2.exe)\0csgo.exe;hl2.exe\0All Files (*.*)\0*.*\0";
+        info.lpstrFilter = L"Game .exe file (csgo.exe/hl2.exe/momentum.exe)\0csgo.exe;hl2.exe;momentum.exe\0All Files (*.*)\0*.*\0";
         info.lpstrCustomFilter = nullptr;
         info.nFilterIndex = 0;
         info.lpstrFile = path;
@@ -885,165 +891,18 @@ private:
         return GetOpenFileNameW(&info);
     }
 
-    static void create_con_vars()
+    static void create_cfg_file()
     {
-        std::snprintf(off_alias_name, std::size(off_alias_name), "%S_off", version_info.name);
-        std::snprintf(left_alias_name, std::size(left_alias_name), "_left");
-        std::snprintf(right_alias_name, std::size(right_alias_name), "_right");
-        std::snprintf(speed_alias_name, std::size(speed_alias_name), "_speed");
-
-        char name[CON_VAR_MAX_COUNT];
-
-        std::snprintf(name, std::size(name), "%S_version", version_info.name);
-        version.emplace(name);
-
-        std::snprintf(name, std::size(name), "%S_url", version_info.name);
-        url.emplace(name);
-
-        std::snprintf(name, std::size(name), "%S_freq", version_info.name);
-        freq.emplace(name);
-
-        std::snprintf(name, std::size(name), "%S_sleep", version_info.name);
-        sleep.emplace(name);
-
-        yawspeed.emplace("_cl_yawspeed");
-        anglespeedkey.emplace("_cl_anglespeedkey");
-        sensitivity.emplace("sensitivity");
-        yaw.emplace("m_yaw");
-        in_left.emplace("_in_left");
-        in_right.emplace("_in_right");
-        in_speed.emplace("_in_speed");
-    }
-
-    static void init_con_vars()
-    {
-        std::snprintf(version->value, std::size(version->value), "%S %S", version_info.title, version_info.version);
-        std::snprintf(url->value, std::size(url->value), "%S", version_info.copyright);
-
-        std::strcpy(sensitivity->value, "");
-        sensitivity->parse_double();
-
-        std::strcpy(yaw->value, "");
-        yaw->parse_double();
-
-        std::strcpy(in_left->value, "0");
-        in_left->parse_bool();
-
-        std::strcpy(in_right->value, "0");
-        in_right->parse_bool();
-
-        std::strcpy(in_speed->value, "0");
-        in_speed->parse_bool();
-    }
-
-    static void ini_read_con_vars()
-    {
-        wchar_t value[CON_VAR_MAX_COUNT];
-
-        GetPrivateProfileStringW(version_info.name, L"Freq", L"0.001", value, std::size(value), ini_path);
-        std::snprintf(freq->value, std::size(freq->value), "%S", value);
-        freq->parse_double();
-
-        GetPrivateProfileStringW(version_info.name, L"Sleep", L"0.0000005", value, std::size(value), ini_path);
-        std::snprintf(sleep->value, std::size(sleep->value), "%S", value);
-        sleep->parse_double();
-
-        GetPrivateProfileStringW(version_info.name, L"YawSpeed", L"90.0", value, std::size(value), ini_path);
-        std::snprintf(yawspeed->value, std::size(yawspeed->value), "%S", value);
-        yawspeed->parse_double();
-
-        GetPrivateProfileStringW(version_info.name, L"AngleSpeedKey", L"0.33", value, std::size(value), ini_path);
-        std::snprintf(anglespeedkey->value, std::size(anglespeedkey->value), "%S", value);
-        anglespeedkey->parse_double();
-    }
-
-    static void ini_write_con_vars()
-    {
-        wchar_t value[CON_VAR_MAX_COUNT];
-
-        std::swprintf(value, std::size(value), L"%S", freq->value);
-        WritePrivateProfileStringW(version_info.name, L"Freq", value, ini_path);
-
-        std::swprintf(value, std::size(value), L"%S", sleep->value);
-        WritePrivateProfileStringW(version_info.name, L"Sleep", value, ini_path);
-
-        std::swprintf(value, std::size(value), L"%S", yawspeed->value);
-        WritePrivateProfileStringW(version_info.name, L"YawSpeed", value, ini_path);
-
-        std::swprintf(value, std::size(value), L"%S", anglespeedkey->value);
-        WritePrivateProfileStringW(version_info.name, L"AngleSpeedKey", value, ini_path);
-    }
-
-    static void create_cfg_file(bool first_run)
-    {
-        char first_run_setinfos[CFG_MAX_COUNT];
-        if (first_run) {
-            std::snprintf(
-                first_run_setinfos, std::size(first_run_setinfos), 1 + R"(
-setinfo %s "%s"
-setinfo %s "%s"
-setinfo %s "%s"
-setinfo %s "%s")",
-                freq->name, freq->value,
-                sleep->name, sleep->value,
-                yawspeed->name, yawspeed->value,
-                anglespeedkey->name, anglespeedkey->value);
-        }
-
         char text[CFG_MAX_COUNT];
         auto count = std::snprintf(text, std::size(text), 1 + R"(
-setinfo %s "%s"
-setinfo %s "%s"
-
-alias %s "con_logfile :; con_logfile; con_filter_enable 0; con_filter_enable"
-alias +%s "toggle +_left_conturn;"
-alias -%s "toggle -_left_conturn;"
-alias +%s "toggle +_right_conturn;"
-alias -%s "toggle -_right_conturn;"
-alias +%s "toggle +_speed_conturn;"
-alias -%s "toggle -_speed_conturn;"%s%s
+alias %S_off "con_logfile :; con_logfile"
 
 con_logfile %S
-con_filter_text_out "_conturn is not a valid cvar"
-con_filter_enable 1
-
-%s
-%s
-%s
-%s
-%s
-%s
-%s
-%s
-
-con_logfile
-con_filter_text_out
-con_filter_enable
+cl_yawspeed
+_cl_yawspeed
 )",
-
-            version->name, version->value,
-            url->name, url->value,
-
-            off_alias_name,
-            left_alias_name,
-            left_alias_name,
-            right_alias_name,
-            right_alias_name,
-            speed_alias_name,
-            speed_alias_name,
-
-            (first_run ? "\n\n": ""), (first_run ? first_run_setinfos : ""),
-
-            con_log_filename,
-
-            version->name,
-            url->name,
-            freq->name,
-            sleep->name,
-            yawspeed->name,
-            anglespeedkey->name,
-            sensitivity->name,
-            yaw->name);
+            version_info.name,
+            con_log_filename);
 
         HANDLE file = CreateFileW(cfg_path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         DWORD written;
@@ -1058,7 +917,14 @@ con_filter_enable
 
     static void create_con_log_file()
     {
-        CreateSymbolicLinkW(con_log_path, pipe_path, 0);
+        if (!CreateSymbolicLinkW(con_log_path, pipe_path, 0)) {
+            auto err = GetLastError();
+            if (err == ERROR_PRIVILEGE_NOT_HELD) {
+                MessageBoxW(nullptr, L"Failed to create console log symlink. Please run conturn as Administrator.", version_info.title, MB_OK | MB_ICONERROR);
+            } else if (err == ERROR_SHARING_VIOLATION || err == ERROR_ALREADY_EXISTS || err == ERROR_FILE_EXISTS) {
+                MessageBoxW(nullptr, L"Failed to create console log symlink because conturn.log is in use or already exists. Please close the game and delete conturn.log first.", version_info.title, MB_OK | MB_ICONERROR);
+            }
+        }
     }
 
     static void delete_con_log_file()
@@ -1068,38 +934,23 @@ con_filter_enable
 
     static void handle_con_line(const char *line)
     {
-        if (0 == std::strcmp(line, R"(+_left_conturn is not a valid cvar)")) {
-            std::strcpy(in_left->value, "1");
-            in_left->parse_bool();
-        } else if (0 == std::strcmp(line, R"(+_right_conturn is not a valid cvar)")) {
-            std::strcpy(in_right->value, "1");
-            in_right->parse_bool();
-        } else if (0 == std::strcmp(line, R"(+_speed_conturn is not a valid cvar)")) {
-            std::strcpy(in_speed->value, "1");
-            in_speed->parse_bool();
-        } else if (0 == std::strcmp(line, R"(-_left_conturn is not a valid cvar)")) {
-            std::strcpy(in_left->value, "0");
-            in_left->parse_bool();
-        } else if (0 == std::strcmp(line, R"(-_right_conturn is not a valid cvar)")) {
-            std::strcpy(in_right->value, "0");
-            in_right->parse_bool();
-        } else if (0 == std::strcmp(line, R"(-_speed_conturn is not a valid cvar)")) {
-            std::strcpy(in_speed->value, "0");
-            in_speed->parse_bool();
-        } else if (yawspeed->parse_con_cvar_line(line)) {
-            yawspeed->parse_double();
-        } else if (anglespeedkey->parse_con_cvar_line(line)) {
-            anglespeedkey->parse_double();
-        } else if (sensitivity->parse_con_cvar_line(line)) {
-            sensitivity->parse_double();
-        } else if (yaw->parse_con_cvar_line(line)) {
-            yaw->parse_double();
-        } else if (freq->parse_con_cvar_line(line)) {
-            freq->parse_double();
-        } else if (sleep->parse_con_cvar_line(line)) {
-            sleep->parse_double();
-        } else if (0 == std::strncmp(line, R"("con_logfile" = ")", std::size(R"("con_logfile" = ")") - 1)) {
-            create_cfg_file(false);
+        if (0 == std::strncmp(line, "[engine] ", 9)) {
+            line += 9;
+        } else if (line[0] == '[') {
+            const char *close_bracket = std::strchr(line, ']');
+            if (close_bracket && close_bracket[1] == ' ') {
+                line = close_bracket + 2;
+            }
+        }
+
+        if (yawspeed->parse_con_cvar_line(line)) {
+            if (osd) {
+                osd->show(yawspeed->value);
+            }
+        } else if (yawspeed_alt->parse_con_cvar_line(line)) {
+            if (osd) {
+                osd->show(yawspeed_alt->value);
+            }
         }
     }
 
@@ -1115,22 +966,10 @@ con_filter_enable
     inline static wchar_t game_name[PATHCCH_MAX_CCH];
     inline static wchar_t cfg_path[PATHCCH_MAX_CCH];
     inline static wchar_t con_log_path[PATHCCH_MAX_CCH];
-    inline static char off_alias_name[CON_VAR_MAX_COUNT];
-    inline static char left_alias_name[CON_VAR_MAX_COUNT];
-    inline static char right_alias_name[CON_VAR_MAX_COUNT];
-    inline static char speed_alias_name[CON_VAR_MAX_COUNT];
-    inline static std::optional<ConVar> version;
-    inline static std::optional<ConVar> url;
-    inline static std::optional<ConVar> freq;
-    inline static std::optional<ConVar> sleep;
     inline static std::optional<ConVar> yawspeed;
-    inline static std::optional<ConVar> anglespeedkey;
-    inline static std::optional<ConVar> sensitivity;
-    inline static std::optional<ConVar> yaw;
-    inline static std::optional<ConVar> in_left;
-    inline static std::optional<ConVar> in_right;
-    inline static std::optional<ConVar> in_speed;
+    inline static std::optional<ConVar> yawspeed_alt;
     inline static std::optional<TrayIcon> tray_icon;
+    inline static std::optional<OsdOverlay> osd;
 };
 
 int main(int argc, char *argv[])
@@ -1138,3 +977,10 @@ int main(int argc, char *argv[])
     App::run();
     return 0;
 }
+
+#ifdef _MSC_VER
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+    return main(__argc, __argv);
+}
+#endif
