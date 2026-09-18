@@ -4,6 +4,7 @@
 #include <optional>
 #include <algorithm>
 #include <utility>
+#include <initializer_list>
 #define NOMINMAX
 // clang-format off
 #include <windows.h>
@@ -367,7 +368,7 @@ private:
 
 struct OsdOverlay
 {
-    OsdOverlay()
+    OsdOverlay(int x = 40, int y = 40, int font_size = 80)
     {
         auto instance = GetModuleHandle(nullptr);
 
@@ -379,10 +380,9 @@ struct OsdOverlay
         cls.hbrBackground = nullptr;
         RegisterClassExW(&cls);
 
-        int width = 500;
-        int height = 120;
-        int x = 40;
-        int y = 40;
+        font_size_ = (font_size > 0) ? font_size : 80;
+        int width = std::max(500, font_size_ * 8);
+        int height = std::max(120, static_cast<int>(font_size_ * 1.6));
 
         hwnd = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
@@ -426,11 +426,13 @@ private:
         auto oldFont = SelectObject(hdc, font);
         SetBkMode(hdc, TRANSPARENT);
 
-        OffsetRect(&rc, 4, 4);
+        int outline = std::max(1, font_size_ / 40);
+        int offset = outline + 2;
+        OffsetRect(&rc, offset, offset);
 
         SetTextColor(hdc, RGB(0, 0, 0));
-        for (int dx = -2; dx <= 2; ++dx) {
-            for (int dy = -2; dy <= 2; ++dy) {
+        for (int dx = -outline; dx <= outline; ++dx) {
+            for (int dy = -outline; dy <= outline; ++dy) {
                 if (dx == 0 && dy == 0) continue;
                 RECT offset_rc = rc;
                 OffsetRect(&offset_rc, dx, dy);
@@ -472,7 +474,7 @@ private:
                 DeleteObject(keyBrush);
 
                 HFONT font = CreateFontW(
-                    80, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                    font_size_, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI"
                 );
@@ -499,6 +501,7 @@ private:
 
     HWND hwnd = nullptr;
     static inline wchar_t text_[64] = L"";
+    static inline int font_size_ = 80;
 };
 
 struct ConVar
@@ -710,10 +713,34 @@ struct App
         create_con_log_file();
         create_cfg_file();
 
+        ensure_ini_overlay_defaults(ini_path);
+
+        int overlay_x = read_ini_int(ini_path, {
+            {L"Overlay", L"X"},
+            {version_info.name, L"OverlayX"},
+            {version_info.name, L"X"}
+        }, 40);
+
+        int overlay_y = read_ini_int(ini_path, {
+            {L"Overlay", L"Y"},
+            {version_info.name, L"OverlayY"},
+            {version_info.name, L"Y"}
+        }, 40);
+
+        int overlay_font_size = read_ini_int(ini_path, {
+            {L"Overlay", L"FontSize"},
+            {L"Overlay", L"Size"},
+            {version_info.name, L"OverlayFontSize"},
+            {version_info.name, L"FontSize"}
+        }, 80);
+        if (overlay_font_size <= 0) {
+            overlay_font_size = 80;
+        }
+
         auto hwnd = win32::create_window(version_info.name, version_info.name, window_proc);
         CtrlSignalHandler ctrl_signal_handler(hwnd);
         tray_icon.emplace(hwnd, version_info.title, create_tray_menu);
-        osd.emplace();
+        osd.emplace(overlay_x, overlay_y, overlay_font_size);
 
         HANDLE game_process = nullptr;
         std::optional<bool> last_connected;
@@ -889,6 +916,48 @@ private:
         info.lpstrDefExt = nullptr;
         info.FlagsEx = 0;
         return GetOpenFileNameW(&info);
+    }
+
+    static int read_ini_int(const wchar_t *ini_path, std::initializer_list<std::pair<const wchar_t *, const wchar_t *>> locations, int default_val)
+    {
+        wchar_t buffer[64];
+        for (const auto &[section, key] : locations) {
+            if (GetPrivateProfileStringW(section, key, L"", buffer, std::size(buffer), ini_path) > 0) {
+                wchar_t *end = nullptr;
+                long val = std::wcstol(buffer, &end, 10);
+                if (end != buffer) {
+                    return static_cast<int>(val);
+                }
+            }
+        }
+        return default_val;
+    }
+
+    static void ensure_ini_overlay_defaults(const wchar_t *ini_path)
+    {
+        wchar_t buffer[64];
+        bool has_x = GetPrivateProfileStringW(L"Overlay", L"X", L"", buffer, std::size(buffer), ini_path) > 0 ||
+                     GetPrivateProfileStringW(version_info.name, L"OverlayX", L"", buffer, std::size(buffer), ini_path) > 0 ||
+                     GetPrivateProfileStringW(version_info.name, L"X", L"", buffer, std::size(buffer), ini_path) > 0;
+
+        bool has_y = GetPrivateProfileStringW(L"Overlay", L"Y", L"", buffer, std::size(buffer), ini_path) > 0 ||
+                     GetPrivateProfileStringW(version_info.name, L"OverlayY", L"", buffer, std::size(buffer), ini_path) > 0 ||
+                     GetPrivateProfileStringW(version_info.name, L"Y", L"", buffer, std::size(buffer), ini_path) > 0;
+
+        bool has_font = GetPrivateProfileStringW(L"Overlay", L"FontSize", L"", buffer, std::size(buffer), ini_path) > 0 ||
+                        GetPrivateProfileStringW(L"Overlay", L"Size", L"", buffer, std::size(buffer), ini_path) > 0 ||
+                        GetPrivateProfileStringW(version_info.name, L"OverlayFontSize", L"", buffer, std::size(buffer), ini_path) > 0 ||
+                        GetPrivateProfileStringW(version_info.name, L"FontSize", L"", buffer, std::size(buffer), ini_path) > 0;
+
+        if (!has_x) {
+            WritePrivateProfileStringW(L"Overlay", L"X", L"40", ini_path);
+        }
+        if (!has_y) {
+            WritePrivateProfileStringW(L"Overlay", L"Y", L"40", ini_path);
+        }
+        if (!has_font) {
+            WritePrivateProfileStringW(L"Overlay", L"FontSize", L"80", ini_path);
+        }
     }
 
     static void create_cfg_file()

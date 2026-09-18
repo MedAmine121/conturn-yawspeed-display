@@ -8,6 +8,7 @@ Whenever `cl_yawspeed` (or `_cl_yawspeed`) is changed or printed in console (e.g
 
 - [Installation](#installation)
 - [Usage](#usage)
+- [Configuration](#configuration)
 - [How it works](#how-it-works)
 - [Building](#building)
 
@@ -17,7 +18,7 @@ Whenever `cl_yawspeed` (or `_cl_yawspeed`) is changed or printed in console (e.g
 
 The program will run as Administrator in order to create the console log named pipe symlink.
 
-Settings are stored in `<exe-name>.ini`.
+Settings are stored in `<exe-name>.ini` (see [Configuration](#configuration)).
 
 To use with multiple games, copy `conturn.exe` to different names (`conturn-csgo.exe`, `conturn-cstrike.exe`, `conturn-momentum.exe`...) so that different settings files are used.
 
@@ -45,6 +46,30 @@ To detach conturn without closing the program:
 ```cfg
 conturn_off
 ```
+
+## Configuration
+
+Settings are stored in `<exe-name>.ini` (e.g. `conturn.ini`) in the same directory as the executable.
+
+You can customize the overlay position and font size under the `[Overlay]` section:
+
+```ini
+[conturn]
+GamePath=C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\csgo.exe
+
+[Overlay]
+X=40
+Y=40
+FontSize=80
+```
+
+### Overlay Options
+
+| Option | Default | Description |
+|---|---|---|
+| `X` | `40` | Horizontal coordinate of the overlay in pixels (from the left of the screen). Negative values can be used for secondary monitors. |
+| `Y` | `40` | Vertical coordinate of the overlay in pixels (from the top of the screen). |
+| `FontSize` | `80` | Font size of the displayed yawspeed value in pixels. |
 
 ## How it works
 
